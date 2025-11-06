@@ -1,4 +1,7 @@
 pyTelegramBotAPI
 deep-translator
 requests
+flask
+
+
 
