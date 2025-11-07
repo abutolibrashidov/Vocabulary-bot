@@ -14,7 +14,14 @@ from dotenv import load_dotenv
 load_dotenv()
 
 TOKEN = os.getenv("TOKEN")
-PUBLIC_URL = os.getenv("PUBLIC_URL")  # e.g., https://your-app.onrender.com
+
+# Read PUBLIC_URL from Render secret or environment
+PUBLIC_URL_PATH = "/etc/secrets/PUBLIC_URL"
+if os.path.exists(PUBLIC_URL_PATH):
+    with open(PUBLIC_URL_PATH, "r") as f:
+        PUBLIC_URL = f.read().strip()
+else:
+    PUBLIC_URL = os.getenv("PUBLIC_URL", "")
 
 if not TOKEN:
     raise RuntimeError("TOKEN is required in .env")
@@ -147,7 +154,6 @@ def cmd_start(message: types.Message):
     )
 
 # ---------------- Callback handling ----------------
-# For example, phrases/topics selection
 @bot.callback_query_handler(func=lambda call: True)
 def callback_handler(call: types.CallbackQuery):
     data = call.data
@@ -162,7 +168,6 @@ def callback_handler(call: types.CallbackQuery):
 
 # ---------------- Quiz sending ----------------
 def send_quiz_to_user(user_id: int):
-    # Example simple quiz: random word translation
     words = load_json(WORDS_FILE)
     if not words:
         return
@@ -211,10 +216,13 @@ def set_webhook():
     url = f"{PUBLIC_URL.rstrip('/')}{WEBHOOK_PATH}"
     try:
         bot.remove_webhook()
-        bot.set_webhook(url)
-        print("Webhook set to", url)
+        result = bot.set_webhook(url=url)
+        if result:
+            print("✅ Webhook successfully set to", url)
+        else:
+            print("❌ Failed to set webhook. Telegram rejected the URL:", url)
     except Exception as e:
-        print("Failed to set webhook:", e)
+        print("❌ Exception while setting webhook:", e)
 
 # ---------------- Start ----------------
 if __name__ == "__main__":
