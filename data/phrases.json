@@ -1,0 +1,72 @@
+{
+  "happy": [
+    {"phrase": "over the moon", "meaning": "delighted"},
+    {"phrase": "on cloud nine", "meaning": "extremely happy"},
+    {"phrase": "walking on air", "meaning": "feeling very happy"},
+    {"phrase": "in high spirits", "meaning": "cheerful and happy"},
+    {"phrase": "tickled pink", "meaning": "very pleased"}
+  ],
+  "sad": [
+    {"phrase": "down in the dumps", "meaning": "very sad"},
+    {"phrase": "feeling blue", "meaning": "feeling sad"},
+    {"phrase": "in low spirits", "meaning": "unhappy or depressed"},
+    {"phrase": "cry one's eyes out", "meaning": "cry a lot"},
+    {"phrase": "heartbroken", "meaning": "very sad due to loss or disappointment"}
+  ],
+  "angry": [
+    {"phrase": "seeing red", "meaning": "very angry"},
+    {"phrase": "hot under the collar", "meaning": "annoyed or angry"},
+    {"phrase": "blowing a fuse", "meaning": "becoming very angry"},
+    {"phrase": "fuming with rage", "meaning": "extremely angry"},
+    {"phrase": "at boiling point", "meaning": "so angry you might explode"}
+  ],
+  "excited": [
+    {"phrase": "thrilled to bits", "meaning": "very excited"},
+    {"phrase": "on the edge of one's seat", "meaning": "eagerly excited"},
+    {"phrase": "pumped up", "meaning": "very enthusiastic or excited"},
+    {"phrase": "jumping for joy", "meaning": "extremely happy and excited"},
+    {"phrase": "buzzing with excitement", "meaning": "full of excitement"}
+  ],
+  "surprised": [
+    {"phrase": "taken aback", "meaning": "shocked or surprised"},
+    {"phrase": "caught off guard", "meaning": "unexpectedly surprised"},
+    {"phrase": "blown away", "meaning": "extremely impressed or surprised"},
+    {"phrase": "lost for words", "meaning": "so surprised you can’t speak"},
+    {"phrase": "mind-blowing", "meaning": "very surprising or amazing"}
+  ],
+  "tired": [
+    {"phrase": "worn out", "meaning": "extremely tired"},
+    {"phrase": "dead on one's feet", "meaning": "so tired you can barely stand"},
+    {"phrase": "running on fumes", "meaning": "having very little energy left"},
+    {"phrase": "burned out", "meaning": "mentally and physically exhausted"},
+    {"phrase": "dog-tired", "meaning": "very tired"}
+  ],
+  "nervous": [
+    {"phrase": "butterflies in one's stomach", "meaning": "feeling nervous"},
+    {"phrase": "on edge", "meaning": "tense or nervous"},
+    {"phrase": "a bundle of nerves", "meaning": "very nervous"},
+    {"phrase": "breaking out in a cold sweat", "meaning": "feeling anxious or scared"},
+    {"phrase": "heart in your mouth", "meaning": "feeling extremely anxious or scared"}
+  ],
+  "confident": [
+    {"phrase": "full of confidence", "meaning": "very confident"},
+    {"phrase": "on top of the world", "meaning": "feeling very confident and happy"},
+    {"phrase": "sure of oneself", "meaning": "feeling certain about your abilities"},
+    {"phrase": "feeling unstoppable", "meaning": "extremely confident"},
+    {"phrase": "walking tall", "meaning": "feeling proud and confident"}
+  ],
+  "scared": [
+    {"phrase": "scared stiff", "meaning": "very frightened"},
+    {"phrase": "shaking like a leaf", "meaning": "very scared"},
+    {"phrase": "frozen with fear", "meaning": "unable to move because of fear"},
+    {"phrase": "spooked out", "meaning": "frightened or nervous"},
+    {"phrase": "afraid of one's own shadow", "meaning": "easily frightened"}
+  ],
+  "confused": [
+    {"phrase": "all at sea", "meaning": "confused and unsure"},
+    {"phrase": "in a fog", "meaning": "not thinking clearly"},
+    {"phrase": "mixed up", "meaning": "confused about something"},
+    {"phrase": "at a loss", "meaning": "not knowing what to do or say"},
+    {"phrase": "head spinning", "meaning": "feeling overwhelmed or confused"}
+  ]
+}
