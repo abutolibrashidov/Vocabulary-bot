@@ -101,6 +101,7 @@ def translate_dynamic(text: str):
         return None, ("uz" if is_uz else "auto"), ("en" if is_uz else "uz")
 
 # ---------------- Word lookup ----------------
+
 def find_word_info(word: str) -> Optional[dict]:
     words = load_json(WORDS_FILE)
     if not isinstance(words, dict):
@@ -261,4 +262,5 @@ if __name__ == "__main__":
     set_webhook()
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+
 
