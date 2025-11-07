@@ -75,7 +75,7 @@ def detect_uzbek(text: str) -> bool:
     if not text:
         return False
     for ch in text:
-        if "\u0400" <= ch <= "\u04FF":  # Cyrillic range
+        if "\u0400" <= ch <= "\u04FF":  # Cyrillic
             return True
     lower = text.lower()
     uz_tokens = {"men", "sen", "biz", "siz", "ular", "va", "yoq", "yo'q",
@@ -104,7 +104,10 @@ def find_word_info(word: str) -> Optional[dict]:
     words = load_json(WORDS_FILE)
     if not isinstance(words, dict):
         return None
-    return words.get(word.lower())
+    for key, value in words.items():
+        if key.lower() == word.lower():
+            return value
+    return None
 
 def format_word_response(word: str, translation: str, info: Optional[dict] = None) -> str:
     response = f"📝 Word: *{word}*\n🔤 Translation: *{translation}*\n"
@@ -118,7 +121,7 @@ def format_word_response(word: str, translation: str, info: Optional[dict] = Non
         if info.get("suffixes"):
             response += f"➖ Suffixes: {', '.join(info['suffixes'])}\n"
         if info.get("singular_plural"):
-            response += f"👥 Singular/Plural: {info['singular_plural']}\n"
+            response += f"👤 Singular/Plural: {info['singular_plural']}\n"
         if info.get("examples"):
             response += "📖 Examples:\n"
             for ex in info['examples']:
@@ -130,27 +133,29 @@ def format_word_response(word: str, translation: str, info: Optional[dict] = Non
 # ---------------- Bot ----------------
 bot = TeleBot(TOKEN, parse_mode="Markdown")
 
-# ---------------- Start command ----------------
-def send_main_menu(chat_id, first_name=None):
+# ---------------- Persistent options markup ----------------
+def get_main_menu():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.row("🌐 Translate a Word", "🗣 Learn a Phrase")
-    greeting = f"Hello {first_name}!\nWelcome to *{BOT_NAME}*.\nChoose an option below:" if first_name else f"Welcome to *{BOT_NAME}*.\nChoose an option below:"
-    bot.send_message(chat_id, greeting, reply_markup=markup)
+    return markup
 
+# ---------------- Start command ----------------
 @bot.message_handler(commands=["start"])
 def cmd_start(message: types.Message):
     track_user(message.from_user.id)
-    send_main_menu(message.chat.id, message.from_user.first_name)
+    bot.send_message(
+        message.chat.id,
+        f"Hello {message.from_user.first_name}!\nWelcome to *{BOT_NAME}*!",
+        reply_markup=get_main_menu()
+    )
 
 # ---------------- Main message handler ----------------
 @bot.message_handler(func=lambda msg: True)
 def main_handler(message: types.Message):
     text = message.text.strip()
-    
     if text == "🌐 Translate a Word":
         msg = bot.send_message(message.chat.id, "Please enter the word to translate (English or Uzbek):")
         bot.register_next_step_handler(msg, translate_word)
-
     elif text == "🗣 Learn a Phrase":
         phrases = load_json(PHRASES_FILE)
         if not phrases:
@@ -160,9 +165,8 @@ def main_handler(message: types.Message):
         for key in phrases.keys():
             markup.add(types.InlineKeyboardButton(key, callback_data=f"phrase_topic:{key}"))
         bot.send_message(message.chat.id, "Select a phrase topic:", reply_markup=markup)
-    
     else:
-        # If user types any other text, treat it as a word translation
+        # Treat anything else as a word translation
         translate_word(message)
 
 def translate_word(message: types.Message):
@@ -174,9 +178,7 @@ def translate_word(message: types.Message):
     else:
         translation, _, _ = translate_dynamic(word)
         response = f"📝 Word: *{word}*\n🔤 Translation: *{translation}*"
-    bot.send_message(message.chat.id, response)
-    # Show main menu again
-    send_main_menu(message.chat.id)
+    bot.send_message(message.chat.id, response, reply_markup=get_main_menu())
 
 # ---------------- Inline Callback handling ----------------
 @bot.callback_query_handler(func=lambda call: True)
@@ -192,7 +194,7 @@ def callback_handler(call: types.CallbackQuery):
                 text += f"- {p}\n"
         else:
             text = "No phrases found for this topic."
-        bot.send_message(call.message.chat.id, text)
+        bot.send_message(call.message.chat.id, text, reply_markup=get_main_menu())
 
 # ---------------- Quiz sending ----------------
 def send_quiz_to_user(user_id: int):
@@ -200,9 +202,9 @@ def send_quiz_to_user(user_id: int):
     if not words:
         return
     word, info = random.choice(list(words.items()))
+    translation = info.get("translation", None) or word
     bot.send_message(user_id, f"🎯 Quiz time! Translate this word: *{word}*", parse_mode="Markdown")
 
-# ---------------- Quiz Dispatcher Thread ----------------
 def quiz_dispatcher_loop(interval_hours=12):
     while True:
         users = load_all_users()
