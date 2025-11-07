@@ -142,7 +142,7 @@ bot = TeleBot(TOKEN, parse_mode="Markdown")
 @bot.message_handler(commands=["start"])
 def cmd_start(message: types.Message):
     track_user(message.from_user.id)
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.row("🌐 Translate a Word", "🗣 Learn a Phrase")
     bot.send_message(
         message.chat.id,
@@ -158,6 +158,7 @@ def main_handler(message: types.Message):
     if text == "🌐 Translate a Word":
         msg = bot.send_message(message.chat.id, "Please enter the word to translate (English or Uzbek):")
         bot.register_next_step_handler(msg, translate_word)
+
     elif text == "🗣 Learn a Phrase":
         phrases = load_json(PHRASES_FILE)
         if not phrases:
@@ -167,9 +168,10 @@ def main_handler(message: types.Message):
         for key in phrases.keys():
             markup.add(types.InlineKeyboardButton(key, callback_data=f"phrase_topic:{key}"))
         bot.send_message(message.chat.id, "Select a phrase topic:", reply_markup=markup)
+    
     else:
-        msg = bot.send_message(message.chat.id, "Please select an option from the menu or type a word to translate.")
-        bot.register_next_step_handler(msg, translate_word)
+        # If user types any other text, treat it as a word translation
+        translate_word(message)
 
 def translate_word(message: types.Message):
     word = message.text.strip()
