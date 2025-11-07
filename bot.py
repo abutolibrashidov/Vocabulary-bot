@@ -34,9 +34,6 @@ print("Public URL:", PUBLIC_URL)
 # ---------------- File paths ----------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
-if not os.path.exists(DATA_DIR):
-    os.makedirs(DATA_DIR)
-
 WORDS_FILE = os.path.join(DATA_DIR, "words.json")
 PHRASES_FILE = os.path.join(DATA_DIR, "phrases.json")
 TRACK_FILE = os.path.join(BASE_DIR, "tracking.json")
@@ -107,10 +104,7 @@ def find_word_info(word: str) -> Optional[dict]:
     words = load_json(WORDS_FILE)
     if not isinstance(words, dict):
         return None
-    for key, value in words.items():
-        if key.lower() == word.lower():
-            return value
-    return None
+    return words.get(word.lower())
 
 def format_word_response(word: str, translation: str, info: Optional[dict] = None) -> str:
     response = f"📝 Word: *{word}*\n🔤 Translation: *{translation}*\n"
@@ -123,10 +117,8 @@ def format_word_response(word: str, translation: str, info: Optional[dict] = Non
             response += f"➕ Prefixes: {', '.join(info['prefixes'])}\n"
         if info.get("suffixes"):
             response += f"➖ Suffixes: {', '.join(info['suffixes'])}\n"
-        if info.get("singular"):
-            response += f"👤 Singular: {info['singular']}\n"
-        if info.get("plural"):
-            response += f"👥 Plural: {info['plural']}\n"
+        if info.get("singular_plural"):
+            response += f"👥 Singular/Plural: {info['singular_plural']}\n"
         if info.get("examples"):
             response += "📖 Examples:\n"
             for ex in info['examples']:
@@ -139,16 +131,16 @@ def format_word_response(word: str, translation: str, info: Optional[dict] = Non
 bot = TeleBot(TOKEN, parse_mode="Markdown")
 
 # ---------------- Start command ----------------
+def send_main_menu(chat_id, first_name=None):
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.row("🌐 Translate a Word", "🗣 Learn a Phrase")
+    greeting = f"Hello {first_name}!\nWelcome to *{BOT_NAME}*.\nChoose an option below:" if first_name else f"Welcome to *{BOT_NAME}*.\nChoose an option below:"
+    bot.send_message(chat_id, greeting, reply_markup=markup)
+
 @bot.message_handler(commands=["start"])
 def cmd_start(message: types.Message):
     track_user(message.from_user.id)
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.row("🌐 Translate a Word", "🗣 Learn a Phrase")
-    bot.send_message(
-        message.chat.id,
-        f"Hello {message.from_user.first_name}!\nWelcome to *{BOT_NAME}*.\nChoose an option below:",
-        reply_markup=markup
-    )
+    send_main_menu(message.chat.id, message.from_user.first_name)
 
 # ---------------- Main message handler ----------------
 @bot.message_handler(func=lambda msg: True)
@@ -183,6 +175,8 @@ def translate_word(message: types.Message):
         translation, _, _ = translate_dynamic(word)
         response = f"📝 Word: *{word}*\n🔤 Translation: *{translation}*"
     bot.send_message(message.chat.id, response)
+    # Show main menu again
+    send_main_menu(message.chat.id)
 
 # ---------------- Inline Callback handling ----------------
 @bot.callback_query_handler(func=lambda call: True)
@@ -206,7 +200,6 @@ def send_quiz_to_user(user_id: int):
     if not words:
         return
     word, info = random.choice(list(words.items()))
-    translation = info.get("translation", None) or word
     bot.send_message(user_id, f"🎯 Quiz time! Translate this word: *{word}*", parse_mode="Markdown")
 
 # ---------------- Quiz Dispatcher Thread ----------------
