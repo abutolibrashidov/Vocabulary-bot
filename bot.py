@@ -101,15 +101,17 @@ def translate_dynamic(text: str):
         return None, ("uz" if is_uz else "auto"), ("en" if is_uz else "uz")
 
 # ---------------- Word lookup ----------------
-
+https://github.com/abutolibrashidov/Vocabulary-bot/raw/refs/heads/main/words.json
 def find_word_info(word: str) -> Optional[dict]:
-    words = load_json(WORDS_FILE)
+    # Try to load dynamic words from GitHub
+    words = load_words_from_github()
     if not isinstance(words, dict):
-        return None
+        words = load_json(WORDS_FILE)  # fallback to local file
     for key, value in words.items():
         if key.lower() == word.lower():
             return value
     return None
+
 
 def format_word_response(word: str, translation: str, info: Optional[dict] = None) -> str:
     response = f"📝 Word: *{word}*\n🔤 Translation: *{translation}*\n"
@@ -262,5 +264,6 @@ if __name__ == "__main__":
     set_webhook()
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+
 
 
