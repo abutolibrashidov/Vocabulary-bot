@@ -1,21 +1,19 @@
 # bot.py
 import os
-import requests
 import json
 import random
-import threading
-import time
 from typing import Any, Optional
 from flask import Flask, request, abort
 from telebot import TeleBot, types
 from deep_translator import GoogleTranslator
 from dotenv import load_dotenv
+import requests
 
 # ---------------- Environment ----------------
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
-
 PUBLIC_URL_PATH = "/etc/secrets/PUBLIC_URL"
+
 if os.path.exists(PUBLIC_URL_PATH):
     with open(PUBLIC_URL_PATH, "r") as f:
         PUBLIC_URL = f.read().strip()
@@ -101,17 +99,24 @@ def translate_dynamic(text: str):
         return None, ("uz" if is_uz else "auto"), ("en" if is_uz else "uz")
 
 # ---------------- Word lookup ----------------
-https://github.com/abutolibrashidov/Vocabulary-bot/raw/refs/heads/main/words.json
+def load_words_from_github():
+    url = "https://github.com/abutolibrashidov/Vocabulary-bot/raw/refs/heads/main/words.json"
+    try:
+        r = requests.get(url)
+        if r.status_code == 200:
+            return r.json()
+    except Exception as e:
+        print("Failed to load words from GitHub:", e)
+    return {}
+
 def find_word_info(word: str) -> Optional[dict]:
-    # Try to load dynamic words from GitHub
     words = load_words_from_github()
     if not isinstance(words, dict):
-        words = load_json(WORDS_FILE)  # fallback to local file
+        words = load_json(WORDS_FILE)  # fallback
     for key, value in words.items():
         if key.lower() == word.lower():
             return value
     return None
-
 
 def format_word_response(word: str, translation: str, info: Optional[dict] = None) -> str:
     response = f"📝 Word: *{word}*\n🔤 Translation: *{translation}*\n"
@@ -137,13 +142,12 @@ def format_word_response(word: str, translation: str, info: Optional[dict] = Non
 # ---------------- Bot ----------------
 bot = TeleBot(TOKEN, parse_mode="Markdown")
 
-# ---------------- Persistent options markup ----------------
 def get_main_menu():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.row("🌐 Translate a Word", "🗣 Learn a Phrase")
     return markup
 
-# ---------------- Start command ----------------
+# ---------------- Commands ----------------
 @bot.message_handler(commands=["start"])
 def cmd_start(message: types.Message):
     track_user(message.from_user.id)
@@ -153,7 +157,7 @@ def cmd_start(message: types.Message):
         reply_markup=get_main_menu()
     )
 
-# ---------------- Main message handler ----------------
+# ---------------- Message Handling ----------------
 @bot.message_handler(func=lambda msg: True)
 def main_handler(message: types.Message):
     text = message.text.strip()
@@ -170,7 +174,6 @@ def main_handler(message: types.Message):
             markup.add(types.InlineKeyboardButton(key, callback_data=f"phrase_topic:{key}"))
         bot.send_message(message.chat.id, "Select a phrase topic:", reply_markup=markup)
     else:
-        # Treat anything else as a word translation
         translate_word(message)
 
 def translate_word(message: types.Message):
@@ -184,7 +187,7 @@ def translate_word(message: types.Message):
         response = f"📝 Word: *{word}*\n🔤 Translation: *{translation}*"
     bot.send_message(message.chat.id, response, reply_markup=get_main_menu())
 
-# ---------------- Inline Callback handling ----------------
+# ---------------- Inline Callbacks ----------------
 @bot.callback_query_handler(func=lambda call: True)
 def callback_handler(call: types.CallbackQuery):
     data = call.data
@@ -193,37 +196,12 @@ def callback_handler(call: types.CallbackQuery):
         phrases_data = load_json(PHRASES_FILE)
         phrases_list = phrases_data.get(topic, [])
         if phrases_list:
-            text = f"📌 Phrases for *{topic}*:\n"
-            for p in phrases_list:
-                text += f"- {p}\n"
+            text = f"📌 Phrases for *{topic}*:\n" + "\n".join(f"- {p}" for p in phrases_list)
         else:
             text = "No phrases found for this topic."
         bot.send_message(call.message.chat.id, text, reply_markup=get_main_menu())
 
-# ---------------- Quiz sending ----------------
-def send_quiz_to_user(user_id: int):
-    words = load_json(WORDS_FILE)
-    if not words:
-        return
-    word, info = random.choice(list(words.items()))
-    translation = info.get("translation", None) or word
-    bot.send_message(user_id, f"🎯 Quiz time! Translate this word: *{word}*", parse_mode="Markdown")
-
-def quiz_dispatcher_loop(interval_hours=12):
-    while True:
-        users = load_all_users()
-        for uid in users:
-            try:
-                send_quiz_to_user(int(uid))
-            except Exception as e:
-                print("Failed to send quiz to", uid, e)
-        time.sleep(interval_hours * 3600)
-
-def start_quiz_thread():
-    t = threading.Thread(target=quiz_dispatcher_loop, args=(12,), daemon=True)
-    t.start()
-
-# ---------------- Flask webhook ----------------
+# ---------------- Flask Webhook ----------------
 app = Flask(__name__)
 WEBHOOK_PATH = f"/webhook/{TOKEN}"
 
@@ -260,10 +238,7 @@ def set_webhook():
 
 # ---------------- Start ----------------
 if __name__ == "__main__":
-    start_quiz_thread()
+    # Thread for quizzes removed — GitHub Actions handles quizzes now
     set_webhook()
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
-
-
-
