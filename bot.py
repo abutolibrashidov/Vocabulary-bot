@@ -112,7 +112,7 @@ def load_words_from_github():
 def find_word_info(word: str) -> Optional[dict]:
     words = load_words_from_github()
     if not isinstance(words, dict):
-        words = load_json(WORDS_FILE)  # fallback
+        words = load_json(WORDS_FILE)
     for key, value in words.items():
         if key.lower() == word.lower():
             return value
@@ -201,6 +201,30 @@ def callback_handler(call: types.CallbackQuery):
             text = "No phrases found for this topic."
         bot.send_message(call.message.chat.id, text, reply_markup=get_main_menu())
 
+# ---------------- Quiz System ----------------
+def send_quiz_to_user(user_id: int):
+    words = load_json(WORDS_FILE)
+    phrases = load_json(PHRASES_FILE)
+    if not words and not phrases:
+        return
+
+    message = "🎯 Quiz time! Answer these questions:\n"
+
+    for _ in range(3):  # 3 questions per quiz
+        q_type = random.choice(["word_translation", "phrase_meaning", "word_property"])
+        if q_type == "word_translation" and words:
+            word, info = random.choice(list(words.items()))
+            message += f"- Translate this word: *{word}*\n"
+        elif q_type == "phrase_meaning" and phrases:
+            topic = random.choice(list(phrases.keys()))
+            phrase = random.choice(phrases[topic])
+            message += f"- What is the meaning of the phrase: *{phrase}*\n"
+        elif q_type == "word_property" and words:
+            word, info = random.choice(list(words.items()))
+            message += f"- What is the part of speech of: *{word}*?\n"
+
+    bot.send_message(user_id, message, parse_mode="Markdown")
+
 # ---------------- Flask Webhook ----------------
 app = Flask(__name__)
 WEBHOOK_PATH = f"/webhook/{TOKEN}"
@@ -238,7 +262,7 @@ def set_webhook():
 
 # ---------------- Start ----------------
 if __name__ == "__main__":
-    # Thread for quizzes removed — GitHub Actions handles quizzes now
+    # Quiz thread removed; external script will handle sending quizzes
     set_webhook()
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
