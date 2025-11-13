@@ -99,20 +99,22 @@ def translate_dynamic(text: str):
         return None, ("uz" if is_uz else "auto"), ("en" if is_uz else "uz")
 
 # ---------------- Word lookup ----------------
-def load_words_from_github():
-    url = "https://github.com/abutolibrashidov/Vocabulary-bot/raw/refs/heads/main/words.json"
-    try:
-        r = requests.get(url)
-        if r.status_code == 200:
-            return r.json()
-    except Exception as e:
-        print("Failed to load words from GitHub:", e)
-    return {}
+def load_words():
+    """Load words from local file; fallback to GitHub if local file is empty."""
+    words = load_json(WORDS_FILE)
+    if not words:
+        # Fallback
+        url = "https://github.com/abutolibrashidov/Vocabulary-bot/raw/refs/heads/main/words.json"
+        try:
+            r = requests.get(url)
+            if r.status_code == 200:
+                words = r.json()
+        except Exception as e:
+            print("Failed to load words from GitHub:", e)
+    return words if isinstance(words, dict) else {}
 
 def find_word_info(word: str) -> Optional[dict]:
-    words = load_words_from_github()
-    if not isinstance(words, dict):
-        words = load_json(WORDS_FILE)
+    words = load_words()
     for key, value in words.items():
         if key.lower() == word.lower():
             return value
@@ -203,7 +205,7 @@ def callback_handler(call: types.CallbackQuery):
 
 # ---------------- Quiz System ----------------
 def send_quiz_to_user(user_id: int):
-    words = load_json(WORDS_FILE)
+    words = load_words()
     phrases = load_json(PHRASES_FILE)
     if not words and not phrases:
         return
