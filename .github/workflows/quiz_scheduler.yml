@@ -1,0 +1,30 @@
+name: Send Telegram Quiz
+
+on:
+  schedule:
+    - cron: "0 */12 * * *"  # Runs every 12 hours (UTC time)
+  workflow_dispatch:        # Allows you to run manually too
+
+jobs:
+  run_quiz:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run quiz sender
+        env:
+          TOKEN: ${{ secrets.TOKEN }}
+          PUBLIC_URL: ${{ secrets.PUBLIC_URL }}
+        run: |
+          python send_quiz.py
