@@ -28,6 +28,3 @@ jobs:
           PUBLIC_URL: ${{ secrets.PUBLIC_URL }}
         run: |
           python send_quiz.py
-
-    main()
-
