@@ -66,7 +66,12 @@ def track_user(user_id: int):
 def load_all_users():
     data = load_json(TRACK_FILE)
     if isinstance(data, dict):
-        return list(data.get("users", []))
+        # Option 1: use "users" list if exists
+        users_list = data.get("users", [])
+        # Option 2: also include any numeric keys in root (existing structure)
+        numeric_keys = [k for k in data.keys() if k.isdigit()]
+        combined = set(users_list) | set(numeric_keys)
+        return list(combined)
     return []
 
 # ---------------- Translation ----------------
@@ -100,10 +105,8 @@ def translate_dynamic(text: str):
 
 # ---------------- Word lookup ----------------
 def load_words():
-    """Load words from local file; fallback to GitHub if local file is empty."""
     words = load_json(WORDS_FILE)
     if not words:
-        # Fallback
         url = "https://github.com/abutolibrashidov/Vocabulary-bot/raw/refs/heads/main/words.json"
         try:
             r = requests.get(url)
@@ -212,7 +215,7 @@ def send_quiz_to_user(user_id: int):
 
     message = "🎯 Quiz time! Answer these questions:\n"
 
-    for _ in range(3):  # 3 questions per quiz
+    for _ in range(3):
         q_type = random.choice(["word_translation", "phrase_meaning", "word_property"])
         if q_type == "word_translation" and words:
             word, info = random.choice(list(words.items()))
@@ -264,7 +267,7 @@ def set_webhook():
 
 # ---------------- Start ----------------
 if __name__ == "__main__":
-    # Quiz thread removed; external script will handle sending quizzes
+    # Quiz sending handled externally
     set_webhook()
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
