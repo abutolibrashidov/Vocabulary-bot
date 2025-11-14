@@ -1,20 +1,16 @@
 {
-    "users": {},
-    "6644238666": [
-        "Go",
-        "Send",
-        "Wow",
-        "Bot",
-        "Come",
-        "Save",
-        "Said",
-        "go",
-        "mouth",
-        "Learn a Phrase"
-    ],
-    "1083923542": [
-        "Money",
-        "supercalifragilisticexpialidocious",
-        "wonderful"
-    ]
+    "users": {
+        "6644238666": {
+            "username": "user1",
+            "first_name": "Abutolib",
+            "usage_count": 3,
+            "history": ["Go", "Send", "Wow", "Bot", "Come", "Save", "Said", "go", "mouth", "Learn a Phrase"]
+        },
+        "1083923542": {
+            "username": "user2",
+            "first_name": "John",
+            "usage_count": 1,
+            "history": ["Money", "supercalifragilisticexpialidocious", "wonderful"]
+        }
+    }
 }
