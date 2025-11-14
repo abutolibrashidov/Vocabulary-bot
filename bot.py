@@ -84,6 +84,14 @@ def increment_usage_count(user_id: int, item: Optional[str] = None):
             data["users"][sid]["history"].append(item)
         save_json(TRACK_FILE, data)
 
+def track_quiz_response(user_id: int, question_info: dict):
+    """Track each quiz response with question, options, user choice, and correctness."""
+    data = load_json(TRACK_FILE)
+    sid = str(user_id)
+    if "users" in data and sid in data["users"]:
+        data["users"][sid]["history"].append(question_info)
+        save_json(TRACK_FILE, data)
+
 # ---------------- Translation ----------------
 def detect_uzbek(text: str) -> bool:
     if not text:
@@ -159,7 +167,7 @@ bot = TeleBot(TOKEN, parse_mode="Markdown")
 
 def get_main_menu():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.row("🌐 Translate a Word", "🗣 Learn a Phrase")
+    markup.row("🌐 Translate a Word", "🗣 Learn a Phrase", "🎯 Take a Quiz")
     return markup
 
 # ---------------- Commands ----------------
@@ -188,6 +196,8 @@ def main_handler(message: types.Message):
         for key in phrases.keys():
             markup.add(types.InlineKeyboardButton(key, callback_data=f"phrase_topic:{key}"))
         bot.send_message(message.chat.id, "Select a phrase topic:", reply_markup=markup)
+    elif text == "🎯 Take a Quiz":
+        send_quiz_to_user(message.chat.id)
     else:
         translate_word(message)
 
@@ -203,6 +213,103 @@ def translate_word(message: types.Message):
     increment_usage_count(message.from_user.id, word)
     bot.send_message(message.chat.id, response, reply_markup=get_main_menu())
 
+# ---------------- Quiz System ----------------
+def send_quiz_to_user(user_id: int):
+    words = load_words()
+    phrases = load_json(PHRASES_FILE)
+    if not words and not phrases:
+        bot.send_message(user_id, "No words or phrases available for quiz.")
+        return
+
+    # Prepare 3 questions
+    quiz_questions = []
+
+    # 1) Phrase meaning
+    if phrases:
+        topic = random.choice(list(phrases.keys()))
+        phrase = random.choice(phrases[topic])
+        options = [phrase]  # Correct option
+        # Random distractors
+        all_phrases = [p for plist in phrases.values() for p in plist if p != phrase]
+        while len(options) < 4 and all_phrases:
+            distractor = random.choice(all_phrases)
+            if distractor not in options:
+                options.append(distractor)
+        random.shuffle(options)
+        quiz_questions.append({
+            "type": "phrase_meaning",
+            "question": f"What is the meaning of the phrase: *{phrase}*?",
+            "answer": phrase,
+            "options": options
+        })
+
+    # 2) Word property
+    if words:
+        word, info = random.choice(list(words.items()))
+        correct = info.get("part_of_speech", "noun")
+        all_pos = ["noun", "verb", "adjective", "adverb"]
+        options = [correct]
+        while len(options) < 4:
+            distractor = random.choice(all_pos)
+            if distractor not in options:
+                options.append(distractor)
+        random.shuffle(options)
+        quiz_questions.append({
+            "type": "word_property",
+            "question": f"What is the part of speech of: *{word}*?",
+            "answer": correct,
+            "options": options
+        })
+
+    # 3) Random word translation
+    if words:
+        word, info = random.choice(list(words.items()))
+        correct = info.get("translation", word)
+        all_translations = [v.get("translation", k) for k, v in words.items() if k != word]
+        options = [correct]
+        while len(options) < 4 and all_translations:
+            distractor = random.choice(all_translations)
+            if distractor not in options:
+                options.append(distractor)
+        random.shuffle(options)
+        quiz_questions.append({
+            "type": "word_translation",
+            "question": f"Translate this word: *{word}*",
+            "answer": correct,
+            "options": options
+        })
+
+    # Store quiz state
+    user_data = load_json(TRACK_FILE).get("users", {}).get(str(user_id), {})
+    user_data["current_quiz"] = {"questions": quiz_questions, "index": 0}
+    data = load_json(TRACK_FILE)
+    data["users"][str(user_id)] = user_data
+    save_json(TRACK_FILE, data)
+
+    # Send first question
+    send_quiz_question(user_id)
+
+def send_quiz_question(user_id: int):
+    data = load_json(TRACK_FILE)
+    user_data = data.get("users", {}).get(str(user_id), {})
+    quiz = user_data.get("current_quiz")
+    if not quiz:
+        bot.send_message(user_id, "No quiz found. Start a new quiz with 🎯 Take a Quiz.")
+        return
+    index = quiz.get("index", 0)
+    questions = quiz.get("questions", [])
+    if index >= len(questions):
+        bot.send_message(user_id, "✅ Quiz finished! Great job!", reply_markup=get_main_menu())
+        user_data.pop("current_quiz", None)
+        data["users"][str(user_id)] = user_data
+        save_json(TRACK_FILE, data)
+        return
+    q = questions[index]
+    markup = types.InlineKeyboardMarkup()
+    for idx, opt in enumerate(q["options"]):
+        markup.add(types.InlineKeyboardButton(opt, callback_data=f"quiz_{index}_{opt}"))
+    bot.send_message(user_id, q["question"], reply_markup=markup)
+
 # ---------------- Inline Callbacks ----------------
 @bot.callback_query_handler(func=lambda call: True)
 def callback_handler(call: types.CallbackQuery):
@@ -217,31 +324,39 @@ def callback_handler(call: types.CallbackQuery):
             text = "No phrases found for this topic."
         increment_usage_count(call.from_user.id)
         bot.send_message(call.message.chat.id, text, reply_markup=get_main_menu())
-
-# ---------------- Quiz System ----------------
-def send_quiz_to_user(user_id: int):
-    words = load_words()
-    phrases = load_json(PHRASES_FILE)
-    if not words and not phrases:
-        return
-
-    message = "🎯 Quiz time! Answer these questions:\n"
-
-    for _ in range(3):
-        q_type = random.choice(["word_translation", "phrase_meaning", "word_property"])
-        if q_type == "word_translation" and words:
-            word, info = random.choice(list(words.items()))
-            message += f"- Translate this word: *{word}*\n"
-        elif q_type == "phrase_meaning" and phrases:
-            topic = random.choice(list(phrases.keys()))
-            phrase = random.choice(phrases[topic])
-            message += f"- What is the meaning of the phrase: *{phrase}*\n"
-        elif q_type == "word_property" and words:
-            word, info = random.choice(list(words.items()))
-            message += f"- What is the part of speech of: *{word}*?\n"
-
-    increment_usage_count(user_id)
-    bot.send_message(user_id, message, parse_mode="Markdown")
+    elif data.startswith("quiz_"):
+        parts = data.split("_")
+        index = int(parts[1])
+        selected = "_".join(parts[2:])
+        # Load quiz
+        user_id = call.from_user.id
+        data_json = load_json(TRACK_FILE)
+        user_data = data_json.get("users", {}).get(str(user_id), {})
+        quiz = user_data.get("current_quiz", {})
+        questions = quiz.get("questions", [])
+        if index >= len(questions):
+            return
+        q = questions[index]
+        correct = q["answer"]
+        # Track response
+        track_quiz_response(user_id, {
+            "question_type": q["type"],
+            "question": q["question"],
+            "options": q["options"],
+            "answer": correct,
+            "user_choice": selected,
+            "correct": selected == correct
+        })
+        # Feedback
+        if selected == correct:
+            bot.send_message(user_id, "✅ Great job! 🎉")
+        else:
+            bot.send_message(user_id, "❌ Keep going, I believe in you! 💪")
+        # Move to next question
+        user_data["current_quiz"]["index"] = index + 1
+        data_json["users"][str(user_id)] = user_data
+        save_json(TRACK_FILE, data_json)
+        send_quiz_question(user_id)
 
 # ---------------- Flask Webhook ----------------
 app = Flask(__name__)
