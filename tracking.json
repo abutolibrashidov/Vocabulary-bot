@@ -1,16 +1,18 @@
-{
-    "users": {
-        "6644238666": {
-            "username": "user1",
-            "first_name": "Abutolib",
-            "usage_count": 3,
-            "history": ["Go", "Send", "Wow", "Bot", "Come", "Save", "Said", "go", "mouth", "Learn a Phrase"]
-        },
-        "1083923542": {
-            "username": "user2",
-            "first_name": "John",
-            "usage_count": 1,
-            "history": ["Money", "supercalifragilisticexpialidocious", "wonderful"]
-        }
+"users": {
+    "123456": {
+        "username": "abot",
+        "first_name": "Abutolib",
+        "usage_count": 5,
+        "history": [
+            {
+                "question_type": "word_property",
+                "question": "tiring",
+                "options": ["noun","adjective","verb","adverb"],
+                "answer": "adjective",
+                "user_choice": "noun",
+                "correct": false
+            },
+            ...
+        ]
     }
 }
