@@ -52,34 +52,44 @@ def save_json(file_path: str, data: Any):
         json.dump(data, f, ensure_ascii=False, indent=4)
 
 # ---------------- Tracking ----------------
-def track_user(user_id: int):
+def track_user(user_id: int, username: str = "", first_name: str = ""):
     data = load_json(TRACK_FILE)
     if not isinstance(data, dict):
         data = {}
-    users = data.get("users", [])
+    users = data.get("users", {})
     sid = str(user_id)
-    if sid not in users:
-        users.append(sid)
-        data["users"] = users
-        save_json(TRACK_FILE, data)
 
-def load_all_users():
+    if sid not in users:
+        users[sid] = {
+            "username": username,
+            "first_name": first_name,
+            "usage_count": 0,
+            "history": []
+        }
+    data["users"] = users
+    save_json(TRACK_FILE, data)
+
+def load_all_users() -> dict:
     data = load_json(TRACK_FILE)
     if isinstance(data, dict):
-        # Option 1: use "users" list if exists
-        users_list = data.get("users", [])
-        # Option 2: also include any numeric keys in root (existing structure)
-        numeric_keys = [k for k in data.keys() if k.isdigit()]
-        combined = set(users_list) | set(numeric_keys)
-        return list(combined)
-    return []
+        return data.get("users", {})
+    return {}
+
+def increment_usage_count(user_id: int, item: Optional[str] = None):
+    data = load_json(TRACK_FILE)
+    sid = str(user_id)
+    if "users" in data and sid in data["users"]:
+        data["users"][sid]["usage_count"] += 1
+        if item:
+            data["users"][sid]["history"].append(item)
+        save_json(TRACK_FILE, data)
 
 # ---------------- Translation ----------------
 def detect_uzbek(text: str) -> bool:
     if not text:
         return False
     for ch in text:
-        if "\u0400" <= ch <= "\u04FF":  # Cyrillic
+        if "\u0400" <= ch <= "\u04FF":
             return True
     lower = text.lower()
     uz_tokens = {"men", "sen", "biz", "siz", "ular", "va", "yoq", "yo'q",
@@ -155,7 +165,7 @@ def get_main_menu():
 # ---------------- Commands ----------------
 @bot.message_handler(commands=["start"])
 def cmd_start(message: types.Message):
-    track_user(message.from_user.id)
+    track_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
     bot.send_message(
         message.chat.id,
         f"Hello {message.from_user.first_name}!\nWelcome to *{BOT_NAME}*!",
@@ -190,6 +200,7 @@ def translate_word(message: types.Message):
     else:
         translation, _, _ = translate_dynamic(word)
         response = f"📝 Word: *{word}*\n🔤 Translation: *{translation}*"
+    increment_usage_count(message.from_user.id, word)
     bot.send_message(message.chat.id, response, reply_markup=get_main_menu())
 
 # ---------------- Inline Callbacks ----------------
@@ -204,6 +215,7 @@ def callback_handler(call: types.CallbackQuery):
             text = f"📌 Phrases for *{topic}*:\n" + "\n".join(f"- {p}" for p in phrases_list)
         else:
             text = "No phrases found for this topic."
+        increment_usage_count(call.from_user.id)
         bot.send_message(call.message.chat.id, text, reply_markup=get_main_menu())
 
 # ---------------- Quiz System ----------------
@@ -228,6 +240,7 @@ def send_quiz_to_user(user_id: int):
             word, info = random.choice(list(words.items()))
             message += f"- What is the part of speech of: *{word}*?\n"
 
+    increment_usage_count(user_id)
     bot.send_message(user_id, message, parse_mode="Markdown")
 
 # ---------------- Flask Webhook ----------------
