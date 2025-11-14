@@ -1,18 +1,19 @@
-"users": {
+{
+  "users": {
     "123456": {
-        "username": "abot",
-        "first_name": "Abutolib",
-        "usage_count": 5,
-        "history": [
-            {
-                "question_type": "word_property",
-                "question": "tiring",
-                "options": ["noun","adjective","verb","adverb"],
-                "answer": "adjective",
-                "user_choice": "noun",
-                "correct": false
-            },
-            ...
-        ]
+      "username": "abot",
+      "first_name": "Abutolib",
+      "usage_count": 5,
+      "history": [
+        {
+          "question_type": "word_property",
+          "question": "tiring",
+          "options": ["noun","adjective","verb","adverb"],
+          "answer": "adjective",
+          "user_choice": "noun",
+          "correct": false
+        }
+      ]
     }
+  }
 }
