@@ -2,6 +2,7 @@
 import os
 import json
 import random
+from datetime import datetime
 from typing import Any, Optional
 from flask import Flask, request, abort
 from telebot import TeleBot, types
@@ -54,6 +55,7 @@ def save_json(file_path: str, data: Any):
     except Exception as e:
         print(f"[ERROR] Failed to save JSON {file_path}: {e}")
 
+# ---------------- User Tracking ----------------
 def ensure_user_record(user_id: int, username: str = "", first_name: str = ""):
     data = load_json(TRACK_FILE)
     if not isinstance(data, dict):
@@ -65,25 +67,24 @@ def ensure_user_record(user_id: int, username: str = "", first_name: str = ""):
             "username": username or "",
             "first_name": first_name or "",
             "usage_count": 0,
-            "history": []
+            "history": [],
+            "last_quiz_date": "",
+            "daily_quiz_count": 0,
+            "current_quiz": None
         }
     data["users"] = users
     save_json(TRACK_FILE, data)
+
+def track_user(user_id: int, username: str = "", first_name: str = ""):
+    ensure_user_record(user_id, username, first_name)
 
 def increment_usage_count(user_id: int, item: Optional[str] = None):
     data = load_json(TRACK_FILE)
     sid = str(user_id)
     if "users" in data and sid in data["users"]:
-        data["users"][sid]["usage_count"] = data["users"][sid].get("usage_count", 0) + 1
+        data["users"][sid]["usage_count"] += 1
         if item:
             data["users"][sid]["history"].append(item)
-        save_json(TRACK_FILE, data)
-
-def track_quiz_response(user_id: int, question_info: dict):
-    data = load_json(TRACK_FILE)
-    sid = str(user_id)
-    if "users" in data and sid in data["users"]:
-        data["users"][sid]["history"].append(question_info)
         save_json(TRACK_FILE, data)
 
 # ---------------- Translation ----------------
@@ -156,7 +157,7 @@ def format_word_response(word: str, translation: str, info: Optional[dict] = Non
             response += f"💡 Synonyms: {', '.join(info['synonyms'])}\n"
     return response.strip()
 
-# ---------------- Bot ----------------
+# ---------------- Bot Setup ----------------
 bot = TeleBot(TOKEN, parse_mode="Markdown")
 
 def get_main_menu():
@@ -170,7 +171,7 @@ def cmd_start(message: types.Message):
     track_user(message.from_user.id, message.from_user.username or "", message.from_user.first_name or "")
     bot.send_message(
         message.chat.id,
-        f"Hello {message.from_user.first_name}!\nWelcome to *{BOT_NAME}*!",
+        f"Hello {message.from_user.first_name}! 👋\nWelcome to *{BOT_NAME}*!",
         reply_markup=get_main_menu()
     )
 
@@ -179,6 +180,7 @@ def cmd_start(message: types.Message):
 def main_handler(message: types.Message):
     text = (message.text or "").strip()
     user_id = getattr(message.from_user, "id", None)
+
     if text == "🌐 Translate a Word":
         msg = bot.send_message(message.chat.id, "Please enter the word to translate (English or Uzbek):")
         bot.register_next_step_handler(msg, translate_word)
@@ -192,10 +194,8 @@ def main_handler(message: types.Message):
             markup.add(types.InlineKeyboardButton(key, callback_data=f"phrase:{key}"))
         bot.send_message(message.chat.id, "Select a phrase topic:", reply_markup=markup)
     elif text == "🎯 Take a Quiz":
-        if user_id is None:
-            bot.send_message(message.chat.id, "Unable to identify you (no user id). Try in a private chat.")
-            return
-        send_quiz_to_user(user_id)
+        if user_id:
+            send_quiz_to_user(user_id)
     else:
         translate_word(message)
 
@@ -210,15 +210,49 @@ def translate_word(message: types.Message):
         if not translation:
             translation = word
         response = f"📝 Word: *{word}*\n🔤 Translation: *{translation}*"
+
     increment_usage_count(message.from_user.id, word)
     bot.send_message(message.chat.id, response, reply_markup=get_main_menu())
 
+    # Check automatic quiz
+    send_quiz_if_allowed(message.from_user.id)
+
+# ---------------- Phrase Learning ----------------
+@bot.callback_query_handler(func=lambda call: call.data.startswith("phrase:"))
+def phrase_callback(call: types.CallbackQuery):
+    topic = call.data.split(":", 1)[1]
+    phrases = load_json(PHRASES_FILE)
+    if topic in phrases:
+        phrase = random.choice(phrases[topic])
+        bot.answer_callback_query(call.id)
+        bot.send_message(call.message.chat.id, f"🗣 Phrase from *{topic}*:\n\n👉 {phrase}")
+        increment_usage_count(call.from_user.id, f"phrase:{topic}")
+        send_quiz_if_allowed(call.from_user.id)
+    else:
+        bot.answer_callback_query(call.id, "Topic not found.")
+
 # ---------------- Quiz System ----------------
+def send_quiz_if_allowed(user_id: int):
+    data = load_json(TRACK_FILE)
+    user = data.get("users", {}).get(str(user_id))
+    if not user:
+        return
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    if user.get("last_quiz_date") != today:
+        user["daily_quiz_count"] = 0
+        user["last_quiz_date"] = today
+
+    if user.get("daily_quiz_count", 0) < 2:
+        user["daily_quiz_count"] += 1
+        data["users"][str(user_id)] = user
+        save_json(TRACK_FILE, data)
+        send_quiz_to_user(user_id)
+
 def send_quiz_to_user(user_id: int):
     ensure_user_record(user_id)
     words = load_words()
     phrases = load_json(PHRASES_FILE)
-
     if not words and not phrases:
         bot.send_message(user_id, "No words or phrases available for quiz.")
         return
@@ -281,8 +315,6 @@ def send_quiz_to_user(user_id: int):
 
     # Save quiz state
     data = load_json(TRACK_FILE)
-    if not isinstance(data, dict):
-        data = {}
     users = data.get("users", {})
     sid = str(user_id)
     user_data = users.get(sid, {"username": "", "first_name": "", "usage_count": 0, "history": []})
@@ -314,87 +346,64 @@ def send_quiz_question(user_id: int):
     q = questions[index]
     markup = types.InlineKeyboardMarkup()
     for opt_idx, opt in enumerate(q.get("options", [])):
-        callback = f"quiz:{index}:{opt_idx}"
-        markup.add(types.InlineKeyboardButton(opt, callback_data=callback))
-
+        markup.add(types.InlineKeyboardButton(opt, callback_data=f"quiz:{index}:{opt_idx}"))
     bot.send_message(user_id, q.get("question"), reply_markup=markup)
 
-# ---------------- Inline Callbacks ----------------
-@bot.callback_query_handler(func=lambda call: True)
-def callback_handler(call: types.CallbackQuery):
-    data_payload = (call.data or "")
-    if data_payload.startswith("phrase:"):
-        topic = data_payload.split(":", 1)[1]
-        phrases = load_json(PHRASES_FILE)
-        if topic not in phrases:
-            bot.answer_callback_query(call.id, "Topic not found.")
-            return
-        phrase = random.choice(phrases[topic])
-        bot.answer_callback_query(call.id)
-        bot.send_message(call.message.chat.id, f"🗣 Phrase from *{topic}*:\n\n👉 {phrase}")
-        increment_usage_count(call.from_user.id, f"phrase:{topic}")
+# ---------------- Quiz Callbacks ----------------
+@bot.callback_query_handler(func=lambda call: call.data.startswith("quiz:"))
+def quiz_callback(call: types.CallbackQuery):
+    parts = call.data.split(":")
+    if len(parts) != 3:
+        bot.answer_callback_query(call.id, "Invalid quiz callback.")
+        return
+    try:
+        q_index = int(parts[1])
+        opt_idx = int(parts[2])
+    except Exception:
+        bot.answer_callback_query(call.id, "Invalid quiz data.")
         return
 
-    if data_payload.startswith("quiz:"):
-        parts = data_payload.split(":")
-        if len(parts) != 3:
-            bot.answer_callback_query(call.id, "Invalid quiz callback.")
-            return
-        try:
-            q_index = int(parts[1])
-            opt_idx = int(parts[2])
-        except Exception:
-            bot.answer_callback_query(call.id, "Invalid quiz data.")
-            return
-
-        user_id = call.from_user.id
-        data_all = load_json(TRACK_FILE)
-        user_data = data_all.get("users", {}).get(str(user_id), {})
-        quiz = user_data.get("current_quiz")
-        if not quiz:
-            bot.answer_callback_query(call.id, "Quiz expired. Start again.")
-            return
-
-        questions = quiz.get("questions", [])
-        if q_index < 0 or q_index >= len(questions):
-            bot.answer_callback_query(call.id, "Question index out of range.")
-            return
-
-        question = questions[q_index]
-        options = question.get("options", [])
-        if opt_idx < 0 or opt_idx >= len(options):
-            bot.answer_callback_query(call.id, "Option out of range.")
-            return
-
-        selected = options[opt_idx]
-        correct = question.get("answer")
-
-        # Track response
-        res_obj = {
-            "question_type": question.get("type"),
-            "question": question.get("question"),
-            "options": options,
-            "answer": correct,
-            "user_choice": selected,
-            "correct": selected == correct
-        }
-        track_quiz_response(user_id, res_obj)
-
-        if selected == correct:
-            bot.answer_callback_query(call.id, "✅ Correct!")
-            bot.send_message(user_id, "✅ Great job! 🎉")
-        else:
-            bot.answer_callback_query(call.id, f"❌ Wrong — correct: {correct}")
-            bot.send_message(user_id, "❌ Keep going, I believe in you! 💪")
-
-        quiz["index"] = q_index + 1
-        data_all["users"][str(user_id)] = user_data
-        save_json(TRACK_FILE, data_all)
-
-        send_quiz_question(user_id)
+    user_id = call.from_user.id
+    data_all = load_json(TRACK_FILE)
+    user_data = data_all.get("users", {}).get(str(user_id), {})
+    quiz = user_data.get("current_quiz")
+    if not quiz:
+        bot.answer_callback_query(call.id, "Quiz expired. Start again.")
         return
 
-    bot.answer_callback_query(call.id, "Unknown action.")
+    questions = quiz.get("questions", [])
+    if q_index < 0 or q_index >= len(questions):
+        bot.answer_callback_query(call.id, "Question index out of range.")
+        return
+
+    question = questions[q_index]
+    options = question.get("options", [])
+    if opt_idx < 0 or opt_idx >= len(options):
+        bot.answer_callback_query(call.id, "Option out of range.")
+        return
+
+    selected = options[opt_idx]
+    correct = question.get("answer")
+
+    # Track response
+    res_obj = {
+        "question_type": question.get("type"),
+        "question": question.get("question"),
+        "options": options,
+        "answer": correct,
+        "user_choice": selected,
+        "correct": selected == correct
+    }
+    user_data.setdefault("history", []).append(res_obj)
+    bot.answer_callback_query(call.id, "✅ Correct!" if selected == correct else f"❌ Wrong — correct: {correct}")
+    bot.send_message(user_id, "✅ Great job! 🎉" if selected == correct else "❌ Keep going! 💪")
+
+    # Move to next question
+    quiz["index"] = q_index + 1
+    data_all["users"][str(user_id)] = user_data
+    save_json(TRACK_FILE, data_all)
+
+    send_quiz_question(user_id)
 
 # ---------------- Flask Webhook ----------------
 app = Flask(__name__)
