@@ -3,9 +3,10 @@ import os
 import json
 import random
 from datetime import datetime
-from typing import Any, Optional
-from flask import Flask, request, abort
+from typing import Any, Optional, Dict, List
+from flask import Flask, request, abort, jsonify
 from telebot import TeleBot, types
+from telebot.types import BotCommand
 from deep_translator import GoogleTranslator
 from dotenv import load_dotenv
 import requests
@@ -14,6 +15,7 @@ import requests
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
 PUBLIC_URL_PATH = "/etc/secrets/PUBLIC_URL"
+QUIZ_SECRET = os.getenv("QUIZ_SECRET", "")  # secret for /trigger_quiz
 
 if os.path.exists(PUBLIC_URL_PATH):
     with open(PUBLIC_URL_PATH, "r") as f:
@@ -24,16 +26,16 @@ else:
 if not TOKEN:
     raise RuntimeError("TOKEN is required in .env")
 if not PUBLIC_URL:
-    print("Warning: PUBLIC_URL not set. Webhook may not work automatically.")
+    print("Warning: PUBLIC_URL not set. Webhook may not work automatically. Set PUBLIC_URL env var on Render.")
 
 BOT_NAME = "Vocabulary with Mr. Korsh"
 print("Bot Name:", BOT_NAME)
-print("Bot token:", TOKEN)
 print("Public URL:", PUBLIC_URL)
 
 # ---------------- File paths ----------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
+os.makedirs(DATA_DIR, exist_ok=True)
 WORDS_FILE = os.path.join(DATA_DIR, "words.json")
 PHRASES_FILE = os.path.join(DATA_DIR, "phrases.json")
 TRACK_FILE = os.path.join(BASE_DIR, "tracking.json")
@@ -55,12 +57,23 @@ def save_json(file_path: str, data: Any):
     except Exception as e:
         print(f"[ERROR] Failed to save JSON {file_path}: {e}")
 
-# ---------------- User Tracking ----------------
-def ensure_user_record(user_id: int, username: str = "", first_name: str = ""):
+# Ensure tracking file structure
+def load_tracking() -> Dict:
     data = load_json(TRACK_FILE)
     if not isinstance(data, dict):
         data = {}
-    users = data.get("users", {})
+    if "users" not in data:
+        data["users"] = {}
+    # global mapping of active polls to user
+    if "active_polls" not in data:
+        data["active_polls"] = {}
+    save_json(TRACK_FILE, data)
+    return data
+
+# ---------------- User Tracking ----------------
+def ensure_user_record(user_id: int, username: str = "", first_name: str = ""):
+    data = load_tracking()
+    users = data["users"]
     sid = str(user_id)
     if sid not in users:
         users[sid] = {
@@ -70,21 +83,21 @@ def ensure_user_record(user_id: int, username: str = "", first_name: str = ""):
             "history": [],
             "last_quiz_date": "",
             "daily_quiz_count": 0,
-            "current_quiz": None
+            "current_quiz": None  # {"questions": [...], "index": 0}
         }
-    data["users"] = users
-    save_json(TRACK_FILE, data)
+        data["users"] = users
+        save_json(TRACK_FILE, data)
 
 def track_user(user_id: int, username: str = "", first_name: str = ""):
     ensure_user_record(user_id, username, first_name)
 
 def increment_usage_count(user_id: int, item: Optional[str] = None):
-    data = load_json(TRACK_FILE)
+    data = load_tracking()
     sid = str(user_id)
-    if "users" in data and sid in data["users"]:
-        data["users"][sid]["usage_count"] += 1
+    if sid in data["users"]:
+        data["users"][sid]["usage_count"] = data["users"][sid].get("usage_count", 0) + 1
         if item:
-            data["users"][sid]["history"].append(item)
+            data["users"][sid].setdefault("history", []).append(item)
         save_json(TRACK_FILE, data)
 
 # ---------------- Translation ----------------
@@ -120,7 +133,7 @@ def translate_dynamic(text: str):
 def load_words():
     words = load_json(WORDS_FILE)
     if not words:
-        url = "https://github.com/abutolibrashidov/Vocabulary-bot/raw/refs/heads/main/words.json"
+        url = "https://raw.githubusercontent.com/abutolibrashidov/Vocabulary-bot/main/words.json"
         try:
             r = requests.get(url, timeout=8)
             if r.status_code == 200:
@@ -160,9 +173,17 @@ def format_word_response(word: str, translation: str, info: Optional[dict] = Non
 # ---------------- Bot Setup ----------------
 bot = TeleBot(TOKEN, parse_mode="Markdown")
 
+# Expose commands - makes them visible in desktop clients
+try:
+    commands = [BotCommand("start", "Start the bot"), BotCommand("quiz", "Take a quiz")]
+    bot.set_my_commands(commands)
+except Exception as e:
+    print("Warning: could not set bot commands:", e)
+
 def get_main_menu():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.row("🌐 Translate a Word", "🗣 Learn a Phrase", "🎯 Take a Quiz")
+    markup.row("🌐 Translate a Word", "🗣 Learn a Phrase")
+    markup.row("🎯 Take a Quiz")
     return markup
 
 # ---------------- Commands ----------------
@@ -175,11 +196,17 @@ def cmd_start(message: types.Message):
         reply_markup=get_main_menu()
     )
 
+@bot.message_handler(commands=["quiz"])
+def cmd_quiz(message: types.Message):
+    user_id = message.from_user.id
+    send_quiz_to_user(user_id)
+
 # ---------------- Message Handling ----------------
 @bot.message_handler(func=lambda msg: True)
 def main_handler(message: types.Message):
     text = (message.text or "").strip()
     user_id = getattr(message.from_user, "id", None)
+    track_user(user_id, message.from_user.username or "", message.from_user.first_name or "")
 
     if text == "🌐 Translate a Word":
         msg = bot.send_message(message.chat.id, "Please enter the word to translate (English or Uzbek):")
@@ -231,10 +258,11 @@ def phrase_callback(call: types.CallbackQuery):
     else:
         bot.answer_callback_query(call.id, "Topic not found.")
 
-# ---------------- Quiz System ----------------
+# ---------------- Quiz System (POLL-based) ----------------
 def send_quiz_if_allowed(user_id: int):
-    data = load_json(TRACK_FILE)
-    user = data.get("users", {}).get(str(user_id))
+    ensure_user_record(user_id)
+    data = load_tracking()
+    user = data["users"].get(str(user_id))
     if not user:
         return
 
@@ -244,168 +272,214 @@ def send_quiz_if_allowed(user_id: int):
         user["last_quiz_date"] = today
 
     if user.get("daily_quiz_count", 0) < 2:
-        user["daily_quiz_count"] += 1
+        user["daily_quiz_count"] = user.get("daily_quiz_count", 0) + 1
         data["users"][str(user_id)] = user
         save_json(TRACK_FILE, data)
         send_quiz_to_user(user_id)
 
+def build_quiz_questions() -> List[Dict]:
+    """
+    Build a small quiz (3 questions) from your data.
+    Uses:
+      - word translation (requires 'translation' in words.json)
+      - part_of_speech from words.json
+      - phrase recognition (asks 'which phrase belongs to X topic' with distractors)
+    """
+    questions = []
+    words = load_words()
+    phrases = load_json(PHRASES_FILE)
+
+    # Word translation question
+    if words:
+        word, info = random.choice(list(words.items()))
+        correct = info.get("translation", word)
+        all_trans = [v.get("translation", k) for k, v in words.items() if k != word and isinstance(v, dict)]
+        options = [correct] + (random.sample(all_trans, min(3, len(all_trans))) if all_trans else [])
+        options = list(dict.fromkeys(options))[:4]  # unique, max 4
+        while len(options) < 4:
+            options.append(str(random.choice(list(words.keys()))))
+        random.shuffle(options)
+        questions.append({
+            "type": "word_translation",
+            "prompt": f"Translate this word: *{word}*",
+            "options": options,
+            "correct_index": options.index(correct) if correct in options else 0
+        })
+
+    # Part of speech question
+    if words:
+        word, info = random.choice(list(words.items()))
+        correct = info.get("part_of_speech", "noun")
+        all_pos = ["noun", "verb", "adjective", "adverb"]
+        options = all_pos.copy()
+        random.shuffle(options)
+        questions.append({
+            "type": "word_pos",
+            "prompt": f"What is the part of speech of *{word}*?",
+            "options": options,
+            "correct_index": options.index(correct) if correct in options else 0
+        })
+
+    # Phrase recognition question
+    if phrases:
+        topic = random.choice(list(phrases.keys()))
+        phrase = random.choice(phrases[topic])
+        # build distractors from other phrases
+        all_phrases = [p for plist in phrases.values() for p in plist if p != phrase]
+        options = [phrase] + (random.sample(all_phrases, min(3, len(all_phrases))) if all_phrases else [])
+        options = list(dict.fromkeys(options))[:4]
+        while len(options) < 4:
+            options.append("—")
+        random.shuffle(options)
+        questions.append({
+            "type": "phrase_match",
+            "prompt": f"Which phrase belongs to topic *{topic}*?",
+            "options": options,
+            "correct_index": options.index(phrase)
+        })
+
+    return questions
+
 def send_quiz_to_user(user_id: int):
+    """
+    Create a quiz (list of poll questions) and send the first poll.
+    We store the quiz in tracking.json under user's 'current_quiz'.
+    We also store active poll mapping data['active_polls'][poll_id] = sid
+    """
     ensure_user_record(user_id)
+    data = load_tracking()
     words = load_words()
     phrases = load_json(PHRASES_FILE)
     if not words and not phrases:
         bot.send_message(user_id, "No words or phrases available for quiz.")
         return
 
-    quiz_questions = []
+    questions = build_quiz_questions()
+    if not questions:
+        bot.send_message(user_id, "Could not build a quiz right now. Try later.")
+        return
 
-    # Phrase meaning
-    if phrases:
-        topic = random.choice(list(phrases.keys()))
-        phrase = random.choice(phrases[topic])
-        all_phrases = [p for plist in phrases.values() for p in plist if p != phrase]
-        options = [phrase]
-        while len(options) < 4 and all_phrases:
-            distractor = random.choice(all_phrases)
-            if distractor not in options:
-                options.append(distractor)
-        random.shuffle(options)
-        quiz_questions.append({
-            "type": "phrase_meaning",
-            "question": f"What is the meaning of the phrase: *{phrase}*?",
-            "answer": phrase,
-            "options": options
-        })
-
-    # Word part of speech
-    if words:
-        word, info = random.choice(list(words.items()))
-        correct = info.get("part_of_speech", "noun")
-        all_pos = ["noun", "verb", "adjective", "adverb"]
-        options = [correct]
-        while len(options) < 4:
-            distractor = random.choice(all_pos)
-            if distractor not in options:
-                options.append(distractor)
-        random.shuffle(options)
-        quiz_questions.append({
-            "type": "word_property",
-            "question": f"What is the part of speech of: *{word}*?",
-            "answer": correct,
-            "options": options
-        })
-
-    # Word translation
-    if words:
-        word, info = random.choice(list(words.items()))
-        correct = info.get("translation", word)
-        all_translations = [v.get("translation", k) for k, v in words.items() if k != word and isinstance(v, dict)]
-        options = [correct]
-        while len(options) < 4 and all_translations:
-            distractor = random.choice(all_translations)
-            if distractor not in options:
-                options.append(distractor)
-        random.shuffle(options)
-        quiz_questions.append({
-            "type": "word_translation",
-            "question": f"Translate this word: *{word}*",
-            "answer": correct,
-            "options": options
-        })
-
-    # Save quiz state
-    data = load_json(TRACK_FILE)
-    users = data.get("users", {})
     sid = str(user_id)
-    user_data = users.get(sid, {"username": "", "first_name": "", "usage_count": 0, "history": []})
-    user_data["current_quiz"] = {"questions": quiz_questions, "index": 0}
-    users[sid] = user_data
-    data["users"] = users
+    data["users"].setdefault(sid, data["users"].get(sid, {}))
+    data["users"][sid]["current_quiz"] = {"questions": questions, "index": 0, "results": []}
     save_json(TRACK_FILE, data)
 
     increment_usage_count(user_id, "quiz_sent")
-    send_quiz_question(user_id)
+    # send first question
+    _send_quiz_poll(user_id)
 
-def send_quiz_question(user_id: int):
-    data = load_json(TRACK_FILE)
-    user_data = data.get("users", {}).get(str(user_id), {})
+def _send_quiz_poll(user_id: int):
+    data = load_tracking()
+    sid = str(user_id)
+    user_data = data["users"].get(sid, {})
     quiz = user_data.get("current_quiz")
     if not quiz:
         bot.send_message(user_id, "No quiz found. Start a new quiz with 🎯 Take a Quiz.")
         return
 
-    index = quiz.get("index", 0)
+    idx = quiz.get("index", 0)
     questions = quiz.get("questions", [])
-    if index >= len(questions):
+    if idx >= len(questions):
+        # finished
         bot.send_message(user_id, "✅ Quiz finished! Great job!", reply_markup=get_main_menu())
-        user_data.pop("current_quiz", None)
-        data["users"][str(user_id)] = user_data
+        # optionally summarize
+        results = quiz.get("results", [])
+        correct = sum(1 for r in results if r.get("correct"))
+        bot.send_message(user_id, f"You answered {correct}/{len(results)} correctly.")
+        # cleanup
+        data["users"][sid].pop("current_quiz", None)
         save_json(TRACK_FILE, data)
         return
 
-    q = questions[index]
-    markup = types.InlineKeyboardMarkup()
-    for opt_idx, opt in enumerate(q.get("options", [])):
-        markup.add(types.InlineKeyboardButton(opt, callback_data=f"quiz:{index}:{opt_idx}"))
-    bot.send_message(user_id, q.get("question"), reply_markup=markup)
+    q = questions[idx]
+    question_text = q["prompt"]
+    options = q["options"]
+    correct_index = q["correct_index"]
 
-# ---------------- Quiz Callbacks ----------------
-@bot.callback_query_handler(func=lambda call: call.data.startswith("quiz:"))
-def quiz_callback(call: types.CallbackQuery):
-    parts = call.data.split(":")
-    if len(parts) != 3:
-        bot.answer_callback_query(call.id, "Invalid quiz callback.")
-        return
     try:
-        q_index = int(parts[1])
-        opt_idx = int(parts[2])
-    except Exception:
-        bot.answer_callback_query(call.id, "Invalid quiz data.")
+        msg = bot.send_poll(
+            chat_id=user_id,
+            question=question_text,
+            options=options,
+            type="quiz",
+            correct_option_id=correct_index,
+            is_anonymous=False
+        )
+        # store active poll mapping so poll_answer can be resolved to user and quiz
+        poll_id = msg.poll.id
+        data = load_tracking()
+        data["active_polls"][poll_id] = {"user": sid}
+        save_json(TRACK_FILE, data)
+    except Exception as e:
+        print("Failed to send poll:", e)
+        bot.send_message(user_id, "Failed to send quiz poll. Try again later.")
+
+# ---------------- Poll Answer Handler ----------------
+@bot.poll_answer_handler(func=lambda x: True)
+def handle_poll_answer(poll_answer: types.PollAnswer):
+    """
+    Called when a user answers an existing poll. We look up which user
+    this poll belongs to from tracking.json, evaluate, give feedback,
+    and advance the quiz.
+    """
+    poll_id = poll_answer.poll_id
+    user_id = getattr(poll_answer.user, "id", None)
+    if not user_id:
         return
 
-    user_id = call.from_user.id
-    data_all = load_json(TRACK_FILE)
-    user_data = data_all.get("users", {}).get(str(user_id), {})
+    data = load_tracking()
+    mapping = data.get("active_polls", {}).get(poll_id)
+    if not mapping:
+        # we don't have this poll in mapping (maybe old or not from us)
+        return
+
+    sid = mapping.get("user")
+    if sid != str(user_id):
+        # poll belongs to someone else (ignore)
+        return
+
+    # get user's quiz state
+    user_data = data["users"].get(sid, {})
     quiz = user_data.get("current_quiz")
     if not quiz:
-        bot.answer_callback_query(call.id, "Quiz expired. Start again.")
         return
 
+    qidx = quiz.get("index", 0)
     questions = quiz.get("questions", [])
-    if q_index < 0 or q_index >= len(questions):
-        bot.answer_callback_query(call.id, "Question index out of range.")
+    if qidx >= len(questions):
         return
 
-    question = questions[q_index]
-    options = question.get("options", [])
-    if opt_idx < 0 or opt_idx >= len(options):
-        bot.answer_callback_query(call.id, "Option out of range.")
-        return
+    q = questions[qidx]
+    chosen = poll_answer.option_ids[0] if poll_answer.option_ids else None
+    correct = (chosen == q.get("correct_index"))
+    # save result
+    quiz.setdefault("results", []).append({
+        "type": q.get("type"),
+        "prompt": q.get("prompt"),
+        "chosen_index": chosen,
+        "correct_index": q.get("correct_index"),
+        "correct": correct
+    })
 
-    selected = options[opt_idx]
-    correct = question.get("answer")
+    # feedback to user
+    if correct:
+        bot.send_message(user_id, "✅ Correct! 🎉")
+    else:
+        corr_idx = q.get("correct_index")
+        correct_text = q["options"][corr_idx] if corr_idx is not None and corr_idx < len(q["options"]) else "N/A"
+        bot.send_message(user_id, f"❌ Wrong — correct answer: *{correct_text}*")
 
-    # Track response
-    res_obj = {
-        "question_type": question.get("type"),
-        "question": question.get("question"),
-        "options": options,
-        "answer": correct,
-        "user_choice": selected,
-        "correct": selected == correct
-    }
-    user_data.setdefault("history", []).append(res_obj)
-    bot.answer_callback_query(call.id, "✅ Correct!" if selected == correct else f"❌ Wrong — correct: {correct}")
-    bot.send_message(user_id, "✅ Great job! 🎉" if selected == correct else "❌ Keep going! 💪")
+    # advance
+    quiz["index"] = qidx + 1
+    data["users"][sid] = user_data
+    # remove this poll from active mapping
+    data["active_polls"].pop(poll_id, None)
+    save_json(TRACK_FILE, data)
 
-    # Move to next question
-    quiz["index"] = q_index + 1
-    data_all["users"][str(user_id)] = user_data
-    save_json(TRACK_FILE, data_all)
+    # send next poll
+    _send_quiz_poll(int(sid))
 
-    send_quiz_question(user_id)
-
-# ---------------- Flask Webhook ----------------
+# ---------------- Flask Webhook & Trigger ----------------
 app = Flask(__name__)
 WEBHOOK_PATH = f"/webhook/{TOKEN}"
 
@@ -424,6 +498,38 @@ def telegram_webhook():
     except Exception as e:
         print("Failed to process update:", e)
     return "", 200
+
+# Endpoint for external scheduler (GitHub Actions) to trigger quizzes.
+# POST /trigger_quiz with JSON: {"secret":"<QUIZ_SECRET>", "user_id": optional}
+@app.route("/trigger_quiz", methods=["POST"])
+def trigger_quiz():
+    if not QUIZ_SECRET:
+        return jsonify({"error": "QUIZ_SECRET not configured on server."}), 500
+    data = request.get_json(force=True, silent=True) or {}
+    if data.get("secret") != QUIZ_SECRET:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    target = data.get("user_id")
+    if target:
+        try:
+            user_id = int(target)
+            send_quiz_to_user(user_id)
+            return jsonify({"status": "ok", "sent_to": user_id}), 200
+        except Exception as e:
+            return jsonify({"error": "invalid user_id"}), 400
+
+    # send to all users in tracking (respect daily quota)
+    tdata = load_tracking()
+    users = tdata.get("users", {})
+    sent = []
+    for sid, u in users.items():
+        try:
+            uid = int(sid)
+            send_quiz_if_allowed(uid)
+            sent.append(uid)
+        except Exception:
+            continue
+    return jsonify({"status": "ok", "sent_count": len(sent)}), 200
 
 def set_webhook():
     if not PUBLIC_URL:
