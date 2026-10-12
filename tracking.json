@@ -1,19 +1,24 @@
 {
-  "users": {
-    "123456": {
-      "username": "abot",
-      "first_name": "Abutolib",
-      "usage_count": 5,
-      "history": [
-        {
-          "question_type": "word_property",
-          "question": "tiring",
-          "options": ["noun","adjective","verb","adverb"],
-          "answer": "adjective",
-          "user_choice": "noun",
-          "correct": false
+    "users": {
+        "123456": {
+            "username": "abot",
+            "first_name": "Abutolib",
+            "usage_count": 5,
+            "history": [
+                {
+                    "question_type": "word_property",
+                    "question": "tiring",
+                    "options": ["noun", "adjective", "verb", "adverb"],
+                    "answer": "adjective",
+                    "user_choice": "noun",
+                    "correct": false
+                }
+            ],
+            "last_quiz_date": "",
+            "daily_quiz_count": 0,
+            "current_quiz": null,
+            "results": []
         }
-      ]
-    }
-  }
+    },
+    "active_polls": {}
 }
