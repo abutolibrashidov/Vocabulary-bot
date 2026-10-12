@@ -133,33 +133,88 @@ def increment_usage_count(user_id: int, item: Optional[str] = None):
         save_tracking(data)
 
 # ---------------- Translation ----------------
+# Common Uzbek Latin suffixes that are strong markers of Uzbek text.
+_UZ_SUFFIXES = ("-lik", "-chi", "-lar", "-lar", "-ning", "-ga", "-da", "-dan",
+                "-ni", "-mi", "-ku", "-dir")
+
 def detect_uzbek(text: str) -> bool:
+    """Return True if `text` is likely Uzbek (Cyrillic or Latin Uzbek)."""
     if not text:
         return False
+    # Cyrillic → definitely non-English; treat as Uzbek
     for ch in text:
         if "\u0400" <= ch <= "\u04FF":
             return True
     lower = text.lower()
-    uz_tokens = {"men", "sen", "biz", "siz", "ular", "va", "yoq", "yo'q",
-                 "kitob", "rahmat", "salom", "yaxshi", "bor", "yo'qlik",
-                 "qanday", "iltimos", "olma", "ot", "it", "bolalar"}
+    # Common Uzbek vocabulary tokens
+    uz_tokens = {
+        "men", "sen", "biz", "siz", "ular", "va", "yoq", "yo'q",
+        "kitob", "rahmat", "salom", "yaxshi", "bor", "yo'qlik",
+        "qanday", "iltimos", "olma", "ot", "it", "bolalar",
+        "nima", "qayer", "qachon", "nega", "lekin", "ham", "emas",
+        "kerak", "mumkin", "albatta", "hozir", "bu", "shu", "u",
+    }
     for tok in lower.split():
-        if tok.strip(".,!?;:") in uz_tokens:
+        clean = tok.strip(".,!?;:'\"")
+        if clean in uz_tokens:
             return True
+        # Latin Uzbek suffix markers
+        for suf in _UZ_SUFFIXES:
+            if clean.endswith(suf) and len(clean) > len(suf):
+                return True
     return False
 
+
+def _mymemory_translate(text: str, src: str, tgt: str) -> Optional[str]:
+    """Fallback translation via the free MyMemory REST API."""
+    try:
+        url = (
+            f"https://api.mymemory.translated.net/get"
+            f"?q={requests.utils.quote(text)}&langpair={src}|{tgt}"
+        )
+        resp = requests.get(url, timeout=8)
+        if resp.status_code == 200:
+            data = resp.json()
+            translated = data.get("responseData", {}).get("translatedText", "")
+            # MyMemory returns the original text when it can't translate
+            if translated and translated.strip().lower() != text.strip().lower():
+                return translated.strip()
+    except Exception as e:
+        print(f"[MyMemory] fallback error: {e}")
+    return None
+
+
 def translate_dynamic(text: str):
+    """
+    Translate `text` between English and Uzbek.
+    - Uzbek input  → English output  (source='uz', target='en')
+    - English input → Uzbek output   (source='en', target='uz')
+    Falls back to MyMemory if GoogleTranslator fails or echoes the input.
+    Returns (translated_text, src_lang, tgt_lang).
+    """
     if not text.strip():
         return None, "unknown", "unknown"
+
     is_uz = detect_uzbek(text)
+    src = "uz" if is_uz else "en"
+    tgt = "en" if is_uz else "uz"
+
+    result = None
     try:
-        if is_uz:
-            return GoogleTranslator(source="uz", target="en").translate(text), "uz", "en"
-        else:
-            return GoogleTranslator(source="auto", target="uz").translate(text), "auto", "uz"
+        result = GoogleTranslator(source=src, target=tgt).translate(text)
+        # Treat a returned value identical to the input as a failure
+        if result and result.strip().lower() == text.strip().lower():
+            result = None
     except Exception as e:
-        print("Translation error:", e)
-        return None, ("uz" if is_uz else "auto"), ("en" if is_uz else "uz")
+        print(f"[GoogleTranslator] error ({src}→{tgt}): {e}")
+        result = None
+
+    # Fallback to MyMemory if Google gave nothing useful
+    if not result:
+        print(f"[translate_dynamic] falling back to MyMemory ({src}→{tgt})")
+        result = _mymemory_translate(text, src, tgt)
+
+    return result, src, tgt
 
 # ---------------- Word lookup ----------------
 def load_words() -> Dict:
